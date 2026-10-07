@@ -189,6 +189,7 @@ function setSignedIn(user) {
   els.profileProvider.textContent = getProviderLabel(user);
   els.authSignOut.classList.remove("hidden");
   els.profileSave.disabled = false;
+  setProfileTabEnabled(true);
 }
 
 function setSignedOut(buttonText) {
@@ -199,6 +200,7 @@ function setSignedOut(buttonText) {
   els.profileProvider.textContent = "Not signed in";
   els.authSignOut.classList.add("hidden");
   els.profileSave.disabled = true;
+  setProfileTabEnabled(false);
 }
 
 function setBusy(isBusy) {
@@ -255,6 +257,11 @@ async function saveProfile() {
 }
 
 function setAuthTab(tabName) {
+  if (tabName === "profile" && !currentUser) {
+    setMessage("Sign in before opening your profile.", true);
+    tabName = "signin";
+  }
+
   const wantsProfile = tabName === "profile";
   els.signInPanel.classList.toggle("hidden", wantsProfile);
   els.profilePanel.classList.toggle("hidden", !wantsProfile);
@@ -263,6 +270,13 @@ function setAuthTab(tabName) {
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", String(active));
   });
+}
+
+function setProfileTabEnabled(isEnabled) {
+  const profileTab = Array.from(els.authTabs).find(tab => tab.dataset.authTab === "profile");
+  if (!profileTab) return;
+  profileTab.disabled = !isEnabled;
+  profileTab.setAttribute("aria-disabled", String(!isEnabled));
 }
 
 function getProviderLabel(user) {

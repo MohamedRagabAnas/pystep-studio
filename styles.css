@@ -1021,6 +1021,11 @@ button:disabled {
   background: rgba(62,230,176,.08);
 }
 
+.auth-tab:disabled {
+  opacity: .42;
+  cursor: not-allowed;
+}
+
 .auth-provider-grid .btn {
   flex: 1 1 190px;
 }
