@@ -1,4 +1,5 @@
 const EXAMPLE_STORAGE_KEY = "pystep_my_learning_examples";
+const authBridge = () => window.pystepAuth || null;
 
 const conceptExamples = [
   {
@@ -327,6 +328,43 @@ function saveMyLearningExamples() {
   localStorage.setItem(EXAMPLE_STORAGE_KEY, JSON.stringify(myLearningExamples));
 }
 
+function mergeRemoteLearningExamples(remoteExamples) {
+  if (!Array.isArray(remoteExamples) || !remoteExamples.length) return false;
+
+  const byRemoteId = new Map(myLearningExamples.filter(ex => ex.remoteId).map(ex => [ex.remoteId, ex]));
+  const bySignature = new Map(myLearningExamples.map(ex => [`${ex.title}\n${ex.code}`, ex]));
+  let changed = false;
+
+  remoteExamples.forEach(remote => {
+    const signature = `${remote.title}\n${remote.code}`;
+    const existing = byRemoteId.get(remote.remoteId) || bySignature.get(signature);
+    if (existing) {
+      Object.assign(existing, remote);
+    } else {
+      myLearningExamples.unshift(remote);
+    }
+    changed = true;
+  });
+
+  if (changed) saveMyLearningExamples();
+  return changed;
+}
+
+async function syncMyLearningFromAccount() {
+  const auth = authBridge();
+  if (!auth?.getUser?.()) return;
+
+  try {
+    const remoteExamples = await auth.loadExamples();
+    if (mergeRemoteLearningExamples(remoteExamples)) {
+      renderExamples();
+      showToast("Synced My learning examples.");
+    }
+  } catch (err) {
+    showToast(`Cloud sync failed: ${err.message || String(err)}`, true);
+  }
+}
+
 function getCurrentExample() {
   if (currentExample.source === "my-learning") {
     return myLearningExamples[currentExample.index] || null;
@@ -437,7 +475,9 @@ function saveCurrentExample() {
   if (!title) return;
 
   const existingIndex = currentExample.source === "my-learning" ? currentExample.index : -1;
+  const previous = existingIndex >= 0 ? myLearningExamples[existingIndex] : null;
   const saved = {
+    remoteId: previous?.remoteId,
     title: title.trim(),
     tag: "My learning",
     code: els.editor.value,
@@ -456,6 +496,19 @@ function saveCurrentExample() {
   setLibraryMode("my-learning");
   loadExample("my-learning", currentExample.index);
   showToast("Saved to My learning.");
+
+  const auth = authBridge();
+  if (auth?.getUser?.()) {
+    const savedIndex = currentExample.index;
+    auth.saveExample(saved)
+      .then(remote => {
+        if (!remote) return;
+        myLearningExamples[savedIndex] = remote;
+        saveMyLearningExamples();
+        renderExamples();
+      })
+      .catch(err => showToast(`Saved locally, but cloud sync failed: ${err.message || String(err)}`, true));
+  }
 }
 
 function deleteMyExample(index) {
@@ -464,6 +517,12 @@ function deleteMyExample(index) {
 
   myLearningExamples.splice(index, 1);
   saveMyLearningExamples();
+
+  const auth = authBridge();
+  if (ex.remoteId && auth?.getUser?.()) {
+    auth.deleteExample(ex.remoteId)
+      .catch(err => showToast(`Deleted locally, but cloud delete failed: ${err.message || String(err)}`, true));
+  }
 
   if (currentExample.source === "my-learning") {
     if (myLearningExamples.length) loadExample("my-learning", Math.min(index, myLearningExamples.length - 1));
@@ -1027,6 +1086,9 @@ els.aiQuestionForm.addEventListener("submit", (e) => {
   if (!question) return;
   els.aiQuestionInput.value = "";
   explainWithAi(question);
+});
+window.addEventListener("pystep:auth-changed", () => {
+  syncMyLearningFromAccount();
 });
 
 renderExamples();

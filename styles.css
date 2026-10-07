@@ -285,7 +285,29 @@ button, textarea, input { font: inherit; }
 
 .top-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+
+.account-pill {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(255,255,255,.025);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.account-pill span {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .btn, .step-btn {
@@ -848,6 +870,117 @@ button:disabled {
 .toast.error { border-color: rgba(255,107,129,.35); color: #ffd2d9; }
 .hidden { display: none !important; }
 
+.auth-dialog {
+  width: min(520px, calc(100vw - 28px));
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 18px;
+  padding: 0;
+  color: var(--text);
+  background: #11182b;
+  box-shadow: var(--shadow);
+}
+
+.auth-dialog::backdrop {
+  background: rgba(4, 8, 18, .72);
+  backdrop-filter: blur(8px);
+}
+
+.auth-card {
+  padding: 20px;
+}
+
+.auth-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.auth-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.auth-header p,
+.auth-message {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.icon-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text);
+  background: rgba(255,255,255,.035);
+  cursor: pointer;
+}
+
+.auth-provider-grid,
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.auth-provider-grid .btn {
+  flex: 1 1 190px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: #71809d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--line);
+}
+
+.auth-field {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+  color: #b9c5dd;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.auth-field input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255,255,255,.035);
+  color: var(--text);
+  padding: 11px 12px;
+  outline: 0;
+}
+
+.auth-field input:focus {
+  border-color: rgba(62,230,176,.45);
+}
+
+.auth-actions {
+  margin-top: 16px;
+}
+
+.auth-message.error {
+  color: #ffd2d9;
+}
+
 @media (max-width: 1050px) {
   .app-shell { grid-template-columns: 1fr; }
   .sidebar {
@@ -866,6 +999,8 @@ button:disabled {
 @media (max-width: 680px) {
   .main { padding: 16px; }
   .topbar { align-items: flex-start; flex-direction: column; }
+  .top-actions { width: 100%; }
+  .account-pill { width: 100%; justify-content: space-between; }
   .bottom-grid { grid-template-columns: 1fr; }
   .example-list { max-height: none; }
   .editor-wrap { height: 420px; }
