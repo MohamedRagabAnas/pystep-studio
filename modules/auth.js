@@ -27,6 +27,9 @@ let currentUser = null;
 window.pystepAuth = {
   isConfigured: isSupabaseConfigured,
   getUser: () => currentUser,
+  openSignIn: () => {
+    if (els.authDialog && !els.authDialog.open) els.authDialog.showModal();
+  },
   loadExamples,
   saveExample,
   deleteExample

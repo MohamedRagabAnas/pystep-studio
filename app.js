@@ -328,6 +328,43 @@ function saveMyLearningExamples() {
   localStorage.setItem(EXAMPLE_STORAGE_KEY, JSON.stringify(myLearningExamples));
 }
 
+function isSignedIn() {
+  return Boolean(authBridge()?.getUser?.());
+}
+
+function openSignInDialog() {
+  const auth = authBridge();
+  if (auth?.openSignIn) auth.openSignIn();
+  else document.getElementById("accountBtn")?.click();
+}
+
+function requireSignedIn(actionName) {
+  if (isSignedIn()) return true;
+  showToast(`${actionName} requires a learner account. Please sign in first.`, true);
+  openSignInDialog();
+  return false;
+}
+
+function canUseAi() {
+  return Boolean(AI_API_URL && isSignedIn());
+}
+
+function updateAccountGatedControls() {
+  const signedIn = isSignedIn();
+  els.myLearningTab.disabled = !signedIn;
+  els.newExample.disabled = !signedIn;
+  els.saveExample.disabled = !signedIn;
+  els.aiExplain.disabled = !canUseAi() || (!lastError && stepIndex < 0);
+  els.staticAiNotice.textContent = AI_API_URL
+    ? "Sign in with a learner account to use the AI tutor. Step-by-step Python explanations still run locally."
+    : "AI tutor is disabled in this deployment. Step-by-step Python explanations still run locally.";
+  els.staticAiNotice.classList.toggle("hidden", Boolean(AI_API_URL && signedIn));
+
+  if (!signedIn && libraryMode === "my-learning") {
+    setLibraryMode("concepts");
+  }
+}
+
 function mergeRemoteLearningExamples(remoteExamples) {
   if (!Array.isArray(remoteExamples) || !remoteExamples.length) return false;
 
@@ -373,10 +410,12 @@ function getCurrentExample() {
 }
 
 function setLibraryMode(mode) {
+  if (mode === "my-learning" && !requireSignedIn("My learning")) return;
   libraryMode = mode;
   els.libraryTab.classList.toggle("active", mode === "concepts");
   els.myLearningTab.classList.toggle("active", mode === "my-learning");
   renderExamples();
+  updateAccountGatedControls();
 }
 
 function renderExamples() {
@@ -411,6 +450,16 @@ function renderExamples() {
 }
 
 function renderMyLearningExamples() {
+  if (!isSignedIn()) {
+    els.list.innerHTML = `
+      <div class="library-empty">
+        <strong>Sign in required</strong>
+        <span>My learning examples are stored with your learner account.</span>
+      </div>
+    `;
+    return;
+  }
+
   if (!myLearningExamples.length) {
     els.list.innerHTML = `
       <div class="library-empty">
@@ -458,6 +507,7 @@ function loadExample(source, index) {
 }
 
 function startOwnExample() {
+  if (!requireSignedIn("Creating your own saved examples")) return;
   stopAuto();
   currentExample = { source: "draft", index: -1 };
   els.title.textContent = "Own Python example";
@@ -471,6 +521,8 @@ print("Hello", name)`;
 }
 
 function saveCurrentExample() {
+  if (!requireSignedIn("Saving to My learning")) return;
+
   const title = prompt("Save this example as:", getCurrentExample()?.title || "My Python example");
   if (!title) return;
 
@@ -484,30 +536,25 @@ function saveCurrentExample() {
     insight: "Saved by the learner in My learning."
   };
 
-  if (existingIndex >= 0) {
-    myLearningExamples[existingIndex] = saved;
-    currentExample = { source: "my-learning", index: existingIndex };
-  } else {
-    myLearningExamples.unshift(saved);
-    currentExample = { source: "my-learning", index: 0 };
-  }
-
-  saveMyLearningExamples();
-  setLibraryMode("my-learning");
-  loadExample("my-learning", currentExample.index);
-  showToast("Saved to My learning.");
-
   const auth = authBridge();
   if (auth?.getUser?.()) {
-    const savedIndex = currentExample.index;
+    showToast("Saving to My learning...");
     auth.saveExample(saved)
       .then(remote => {
         if (!remote) return;
-        myLearningExamples[savedIndex] = remote;
+        if (existingIndex >= 0) {
+          myLearningExamples[existingIndex] = remote;
+          currentExample = { source: "my-learning", index: existingIndex };
+        } else {
+          myLearningExamples.unshift(remote);
+          currentExample = { source: "my-learning", index: 0 };
+        }
         saveMyLearningExamples();
-        renderExamples();
+        setLibraryMode("my-learning");
+        loadExample("my-learning", currentExample.index);
+        showToast("Saved to My learning.");
       })
-      .catch(err => showToast(`Saved locally, but cloud sync failed: ${err.message || String(err)}`, true));
+      .catch(err => showToast(`Could not save to your account: ${err.message || String(err)}`, true));
   }
 }
 
@@ -641,7 +688,7 @@ function renderError(error, finalOutput="") {
   els.scope.textContent = "error";
   els.next.disabled = true;
   els.auto.disabled = true;
-  els.aiExplain.disabled = !AI_API_URL;
+  els.aiExplain.disabled = !canUseAi();
   resetAiChatForContext();
   showToast(`Python stopped: ${error.type}${error.line ? ` on line ${error.line}` : ""}`, true);
 }
@@ -661,15 +708,15 @@ function renderStep() {
 
   els.prev.disabled = stepIndex <= 0;
   els.next.disabled = stepIndex >= trace.length - 1;
-  els.aiExplain.disabled = !AI_API_URL;
+  els.aiExplain.disabled = !canUseAi();
   resetAiChatForContext();
 }
 
 function resetAiChatForContext() {
   aiMessages = [];
   els.aiQuestionInput.value = "";
-  els.aiQuestionInput.disabled = !AI_API_URL;
-  els.aiQuestionForm.classList.toggle("hidden", !AI_API_URL);
+  els.aiQuestionInput.disabled = !canUseAi();
+  els.aiQuestionForm.classList.toggle("hidden", !canUseAi());
   els.aiExplanation.classList.add("hidden");
   renderAiChat();
 }
@@ -677,6 +724,9 @@ function resetAiChatForContext() {
 async function explainWithAi(question="Explain what Python is doing right now.") {
   if (!AI_API_URL) {
     showToast("AI tutor is disabled on the free GitHub Pages version.", true);
+    return;
+  }
+  if (!requireSignedIn("AI tutor")) {
     return;
   }
 
@@ -718,9 +768,9 @@ async function explainWithAi(question="Explain what Python is doing right now.")
     renderAiChat();
     showToast("AI explanation failed.", true);
   } finally {
-    els.aiExplain.disabled = false;
+    els.aiExplain.disabled = !canUseAi();
     els.aiExplain.textContent = "Ask AI";
-    els.aiQuestionInput.disabled = false;
+    els.aiQuestionInput.disabled = !canUseAi();
     els.aiQuestionInput.focus();
   }
 }
@@ -1088,10 +1138,12 @@ els.aiQuestionForm.addEventListener("submit", (e) => {
   explainWithAi(question);
 });
 window.addEventListener("pystep:auth-changed", () => {
+  updateAccountGatedControls();
   syncMyLearningFromAccount();
 });
 
 renderExamples();
 loadExample("concepts", 0);
+updateAccountGatedControls();
 els.run.disabled = true;
 initPython();
