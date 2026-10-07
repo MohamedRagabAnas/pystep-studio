@@ -339,7 +339,7 @@ function canUseAi() {
 function updateAccountGatedControls() {
   const signedIn = isSignedIn();
   els.myLearningTab.disabled = !signedIn;
-  els.newExample.disabled = !signedIn;
+  els.newExample.disabled = false;
   els.saveExample.disabled = !signedIn;
   els.aiExplain.disabled = !canUseAi() || (!lastError && stepIndex < 0);
   els.staticAiNotice.textContent = AI_API_URL
@@ -379,7 +379,7 @@ function handleAuthChanged(event) {
   activeLearnerId = nextLearnerId;
   myLearningExamples = [];
 
-  if (currentExample.source === "my-learning" || currentExample.source === "draft") {
+  if (currentExample.source === "my-learning") {
     loadExample("concepts", 0);
   } else {
     renderExamples();
@@ -500,7 +500,6 @@ function loadExample(source, index) {
 }
 
 function startOwnExample() {
-  if (!requireSignedIn("Creating your own saved examples")) return;
   stopAuto();
   currentExample = { source: "draft", index: -1 };
   els.title.textContent = "Own Python example";
