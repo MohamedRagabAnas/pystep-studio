@@ -21,7 +21,7 @@ A polished web-based Python execution visualizer for beginner learners.
 
 GitHub Pages is the recommended free deployment for students. It hosts the app as a static site, so the Python visualizer, examples library, My learning, tracing, output, and local explanations all work without a backend or paid service.
 
-The AI tutor is disabled automatically on GitHub Pages because there is no secure backend for an API key.
+The AI tutor is disabled automatically on GitHub Pages unless `ai-config.js` points to a backend proxy. For a free setup, deploy `cloudflare-worker.js` as a Cloudflare Worker and store your AI key as a Worker secret.
 
 ### Deploy
 
@@ -102,6 +102,46 @@ AI_MODEL=gemini-2.0-flash
 ```
 
 Restart `node server.js` after changing `.env`.
+
+## Optional free AI for GitHub Pages
+
+GitHub Pages cannot hide API keys because it only serves static files. To enable AI without exposing your key, use the included Cloudflare Worker proxy.
+
+Cloudflare Workers has a free plan with a daily request allowance, so it is a practical free backend for a classroom trial.
+
+### Deploy the Worker
+
+1. Create a free Cloudflare account.
+2. Go to **Workers & Pages -> Create Worker**.
+3. Paste the contents of `cloudflare-worker.js`.
+4. Add these Worker variables/secrets:
+
+```text
+AI_API_KEY=your_provider_key
+AI_PROVIDER=openai-compatible
+AI_BASE_URL=https://openrouter.ai/api/v1/chat/completions
+AI_MODEL=openrouter/free
+AI_APP_URL=https://mohamedragabanas.github.io/pystep-studio/
+AI_APP_TITLE=PyStep Studio
+ALLOWED_ORIGIN=https://mohamedragabanas.github.io
+```
+
+For Gemini, use:
+
+```text
+AI_PROVIDER=gemini
+AI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/models
+AI_MODEL=gemini-2.0-flash
+```
+
+5. Deploy the Worker and copy its URL.
+6. Edit `ai-config.js`:
+
+```js
+window.PYSTEP_AI_API_URL = "https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev/api/explain";
+```
+
+7. Commit and push `ai-config.js` to GitHub. GitHub Pages will then use the Worker for AI explanations.
 
 ## Notes
 
