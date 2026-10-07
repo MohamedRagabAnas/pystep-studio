@@ -157,10 +157,9 @@ async function requestGemini(env, context, messages) {
 function buildCorsHeaders(origin, env) {
   const allowed = (env.ALLOWED_ORIGIN || "https://mohamedragabanas.github.io")
     .split(",")
-    .map(value => normalizeOrigin(value.trim()))
+    .map(value => value.trim())
     .filter(Boolean);
-  const requestOrigin = normalizeOrigin(origin);
-  const allowOrigin = allowed.includes(requestOrigin) ? requestOrigin : allowed[0] || "*";
+  const allowOrigin = allowed.includes(origin) ? origin : allowed[0] || "*";
 
   return {
     "Access-Control-Allow-Origin": allowOrigin,
@@ -168,15 +167,6 @@ function buildCorsHeaders(origin, env) {
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin"
   };
-}
-
-function normalizeOrigin(value) {
-  if (!value) return "";
-  try {
-    return new URL(value).origin;
-  } catch {
-    return value.replace(/\/+$/, "");
-  }
 }
 
 function json(payload, status, headers) {
