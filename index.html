@@ -175,34 +175,81 @@
       <div class="auth-header">
         <div>
           <h3>Learner account</h3>
-          <p>Sign in to sync your My learning examples.</p>
+          <p>Manage sign-in, profile, and learning preferences.</p>
         </div>
         <button class="icon-btn" id="authCloseBtn" type="button" aria-label="Close">×</button>
       </div>
 
-      <div class="auth-provider-grid">
-        <button class="btn ghost" id="authGoogleBtn" type="button">Continue with Google</button>
-        <button class="btn ghost" id="authGithubBtn" type="button">Continue with GitHub</button>
+      <div class="auth-tabs" role="tablist" aria-label="Learner account sections">
+        <button class="auth-tab active" type="button" data-auth-tab="signin" role="tab" aria-selected="true">Sign in</button>
+        <button class="auth-tab" type="button" data-auth-tab="profile" role="tab" aria-selected="false">Profile</button>
       </div>
 
-      <div class="auth-divider"><span>Email</span></div>
+      <div id="signInPanel">
+        <div class="auth-provider-grid">
+          <button class="btn ghost" id="authGoogleBtn" type="button">Continue with Google</button>
+          <button class="btn ghost" id="authGithubBtn" type="button">Continue with GitHub</button>
+        </div>
 
-      <label class="auth-field">
-        <span>Email address</span>
-        <input id="authEmail" type="email" autocomplete="email" placeholder="learner@example.com" />
-      </label>
-      <label class="auth-field">
-        <span>Password</span>
-        <input id="authPassword" type="password" autocomplete="current-password" placeholder="At least 6 characters" />
-      </label>
+        <div class="auth-divider"><span>Email</span></div>
 
-      <div class="auth-actions">
-        <button class="btn primary" id="authSignInBtn" type="button">Sign in</button>
-        <button class="btn ghost" id="authSignUpBtn" type="button">Create account</button>
-        <button class="btn ghost hidden" id="authSignOutBtn" type="button">Sign out</button>
+        <label class="auth-field">
+          <span>Email address</span>
+          <input id="authEmail" type="email" autocomplete="email" placeholder="learner@example.com" />
+        </label>
+        <label class="auth-field">
+          <span>Password</span>
+          <input id="authPassword" type="password" autocomplete="current-password" placeholder="At least 6 characters" />
+        </label>
+
+        <div class="auth-actions">
+          <button class="btn primary" id="authSignInBtn" type="button">Sign in</button>
+          <button class="btn ghost" id="authSignUpBtn" type="button">Create account</button>
+        </div>
       </div>
 
-      <p id="authMessage" class="auth-message">Cloud accounts are optional. Local examples still work without signing in.</p>
+      <div id="profilePanel" class="profile-panel hidden">
+        <label class="auth-field">
+          <span>Display name</span>
+          <input id="profileDisplayName" type="text" autocomplete="name" placeholder="Your name" />
+        </label>
+
+        <div class="profile-facts">
+          <div><span>Email</span><strong id="profileEmail">Sign in to view account details</strong></div>
+          <div><span>Provider</span><strong id="profileProvider">Not signed in</strong></div>
+        </div>
+
+        <div class="settings-list">
+          <div class="setting-row">
+            <div>
+              <strong>Theme</strong>
+              <span>Switch between dark and light display.</span>
+            </div>
+            <button class="btn ghost" id="themeToggleBtn" type="button">Use light mode</button>
+          </div>
+          <label class="setting-row">
+            <div>
+              <strong>Focus mode</strong>
+              <span>Hide the sidebar footer for fewer distractions.</span>
+            </div>
+            <input id="focusModeToggle" type="checkbox" />
+          </label>
+          <label class="setting-row">
+            <div>
+              <strong>Compact library</strong>
+              <span>Show example cards with tighter spacing.</span>
+            </div>
+            <input id="compactModeToggle" type="checkbox" />
+          </label>
+        </div>
+
+        <div class="auth-actions">
+          <button class="btn primary" id="profileSaveBtn" type="button" disabled>Save profile</button>
+          <button class="btn ghost hidden" id="authSignOutBtn" type="button">Sign out</button>
+        </div>
+      </div>
+
+      <p id="authMessage" class="auth-message">Sign in to use My learning, AI tutor, and profile settings.</p>
     </form>
   </dialog>
 

@@ -4,10 +4,18 @@ export async function ensureLearnerProfile(user) {
   const supabase = getSupabase();
   if (!supabase || !user) return null;
 
+  const { data: existing, error: lookupError } = await supabase
+    .from("learner_profiles")
+    .select("display_name")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (lookupError) throw lookupError;
+
   const profile = {
     id: user.id,
     email: user.email || null,
-    display_name: user.user_metadata?.full_name || user.user_metadata?.name || user.email || "Learner",
+    display_name: existing?.display_name || user.user_metadata?.full_name || user.user_metadata?.name || user.email || "Learner",
     avatar_url: user.user_metadata?.avatar_url || null,
     updated_at: new Date().toISOString()
   };
@@ -18,6 +26,40 @@ export async function ensureLearnerProfile(user) {
 
   if (error) throw error;
   return profile;
+}
+
+export async function getLearnerProfile(userId) {
+  const supabase = getSupabase();
+  if (!supabase || !userId) return null;
+
+  const { data, error } = await supabase
+    .from("learner_profiles")
+    .select("id,email,display_name,avatar_url,updated_at")
+    .eq("id", userId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function updateLearnerProfile(userId, updates) {
+  const supabase = getSupabase();
+  if (!supabase || !userId) return null;
+
+  const row = {
+    display_name: updates.displayName,
+    updated_at: new Date().toISOString()
+  };
+
+  const { data, error } = await supabase
+    .from("learner_profiles")
+    .update(row)
+    .eq("id", userId)
+    .select("id,email,display_name,avatar_url,updated_at")
+    .single();
+
+  if (error) throw error;
+  return data;
 }
 
 export async function listLearningExamples(userId) {
