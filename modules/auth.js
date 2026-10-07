@@ -2,7 +2,9 @@ import { getSupabase, isSupabaseConfigured } from "./supabaseClient.js";
 import {
   deleteLearningExample,
   ensureLearnerProfile,
+  getLearnerProfile,
   listLearningExamples,
+  updateLearnerProfile,
   upsertLearningExample
 } from "./learnerStore.js";
 
@@ -18,11 +20,23 @@ const els = {
   authGoogle: document.getElementById("authGoogleBtn"),
   authGithub: document.getElementById("authGithubBtn"),
   authSignOut: document.getElementById("authSignOutBtn"),
+  authTabs: document.querySelectorAll("[data-auth-tab]"),
+  signInPanel: document.getElementById("signInPanel"),
+  profilePanel: document.getElementById("profilePanel"),
+  profileDisplayName: document.getElementById("profileDisplayName"),
+  profileEmail: document.getElementById("profileEmail"),
+  profileProvider: document.getElementById("profileProvider"),
+  profileSave: document.getElementById("profileSaveBtn"),
+  themeToggle: document.getElementById("themeToggleBtn"),
+  focusMode: document.getElementById("focusModeToggle"),
+  compactMode: document.getElementById("compactModeToggle"),
   authMessage: document.getElementById("authMessage")
 };
 
 const supabase = getSupabase();
 let currentUser = null;
+let currentProfile = null;
+let preferences = { theme: "dark", focusMode: false, compactMode: false };
 
 window.pystepAuth = {
   isConfigured: isSupabaseConfigured,
@@ -70,6 +84,13 @@ function bindEvents() {
   els.authGoogle.addEventListener("click", () => signInWithProvider("google"));
   els.authGithub.addEventListener("click", () => signInWithProvider("github"));
   els.authSignOut.addEventListener("click", () => signOut());
+  els.profileSave.addEventListener("click", () => saveProfile());
+  els.themeToggle.addEventListener("click", () => setPreference("theme", preferences.theme === "dark" ? "light" : "dark"));
+  els.focusMode.addEventListener("change", () => setPreference("focusMode", els.focusMode.checked));
+  els.compactMode.addEventListener("change", () => setPreference("compactMode", els.compactMode.checked));
+  els.authTabs.forEach(tab => {
+    tab.addEventListener("click", () => setAuthTab(tab.dataset.authTab));
+  });
 }
 
 async function signInWithPassword() {
@@ -109,7 +130,7 @@ async function signOut() {
   await runAuthAction(async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
-    setMessage("Signed out. This browser can still save examples locally.");
+    setMessage("Signed out. My learning and AI are locked until the next sign-in.");
   });
 }
 
@@ -136,16 +157,22 @@ async function runAuthAction(action) {
 
 async function setUser(user) {
   currentUser = user;
+  currentProfile = null;
 
   if (user) {
     try {
       await ensureLearnerProfile(user);
+      currentProfile = await getLearnerProfile(user.id);
     } catch (err) {
       setMessage(`Signed in, but learner database setup is incomplete: ${err.message || String(err)}`, true);
     }
+    loadPreferences(user.id);
     setSignedIn(user);
+    setAuthTab("profile");
   } else {
+    applyPreferences({ theme: "dark", focusMode: false, compactMode: false });
     setSignedOut("Sign in");
+    setAuthTab("signin");
   }
 
   window.dispatchEvent(new CustomEvent("pystep:auth-changed", {
@@ -154,16 +181,24 @@ async function setUser(user) {
 }
 
 function setSignedIn(user) {
-  const label = user.email || user.user_metadata?.full_name || "Learner";
+  const label = currentProfile?.display_name || user.user_metadata?.full_name || user.email || "Learner";
   els.accountBtn.textContent = "Account";
   els.accountStatus.textContent = label;
+  els.profileDisplayName.value = label;
+  els.profileEmail.textContent = user.email || "No email available";
+  els.profileProvider.textContent = getProviderLabel(user);
   els.authSignOut.classList.remove("hidden");
+  els.profileSave.disabled = false;
 }
 
 function setSignedOut(buttonText) {
   els.accountBtn.textContent = buttonText;
   els.accountStatus.textContent = supabase ? "Not signed in" : "Cloud sync off";
+  els.profileDisplayName.value = "";
+  els.profileEmail.textContent = "Sign in to view account details";
+  els.profileProvider.textContent = "Not signed in";
   els.authSignOut.classList.add("hidden");
+  els.profileSave.disabled = true;
 }
 
 function setBusy(isBusy) {
@@ -197,4 +232,75 @@ async function saveExample(example) {
 async function deleteExample(remoteId) {
   if (!currentUser || !remoteId) return;
   await deleteLearningExample(remoteId);
+}
+
+async function saveProfile() {
+  if (!currentUser) {
+    setMessage("Sign in before updating your profile.", true);
+    return;
+  }
+
+  const displayName = els.profileDisplayName.value.trim();
+  if (!displayName) {
+    setMessage("Display name cannot be empty.", true);
+    return;
+  }
+
+  await runAuthAction(async () => {
+    currentProfile = await updateLearnerProfile(currentUser.id, { displayName });
+    await supabase.auth.updateUser({ data: { full_name: displayName } });
+    setSignedIn({ ...currentUser, user_metadata: { ...currentUser.user_metadata, full_name: displayName } });
+    setMessage("Profile updated.");
+  });
+}
+
+function setAuthTab(tabName) {
+  const wantsProfile = tabName === "profile";
+  els.signInPanel.classList.toggle("hidden", wantsProfile);
+  els.profilePanel.classList.toggle("hidden", !wantsProfile);
+  els.authTabs.forEach(tab => {
+    const active = tab.dataset.authTab === tabName;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+}
+
+function getProviderLabel(user) {
+  const providers = user.app_metadata?.providers || [];
+  if (providers.includes("google")) return "Google";
+  if (providers.includes("github")) return "GitHub";
+  if (providers.includes("email")) return "Email";
+  return providers[0] || "Account";
+}
+
+function preferenceKey(userId) {
+  return `pystep_preferences_${userId}`;
+}
+
+function loadPreferences(userId) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(preferenceKey(userId)) || "{}");
+    applyPreferences({ ...preferences, ...parsed });
+  } catch {
+    applyPreferences(preferences);
+  }
+}
+
+function setPreference(key, value) {
+  const next = { ...preferences, [key]: value };
+  applyPreferences(next);
+
+  if (currentUser) {
+    localStorage.setItem(preferenceKey(currentUser.id), JSON.stringify(preferences));
+  }
+}
+
+function applyPreferences(next) {
+  preferences = next;
+  document.body.classList.toggle("theme-light", preferences.theme === "light");
+  document.body.classList.toggle("focus-mode", Boolean(preferences.focusMode));
+  document.body.classList.toggle("compact-mode", Boolean(preferences.compactMode));
+  els.themeToggle.textContent = preferences.theme === "light" ? "Use dark mode" : "Use light mode";
+  els.focusMode.checked = Boolean(preferences.focusMode);
+  els.compactMode.checked = Boolean(preferences.compactMode);
 }
