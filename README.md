@@ -15,6 +15,8 @@ A polished web-based Python execution visualizer for beginner learners.
 - Beginner-friendly explanation panel
 - Built-in examples for variables, decisions, loops, lists, references, functions, and dictionaries
 - Learner examples saved locally in the browser
+- Optional learner accounts with Supabase Auth
+- Optional cloud database for each learner's My learning examples
 - Responsive dark professional UI
 
 ## Free deployment: GitHub Pages
@@ -142,6 +144,32 @@ window.PYSTEP_AI_API_URL = "https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev/
 ```
 
 7. Commit and push `ai-config.js` to GitHub. GitHub Pages will then use the Worker for AI explanations.
+
+## Optional learner accounts and database
+
+Use Supabase for free-tier learner accounts and a small Postgres database. The app supports email/password, Google, and GitHub sign-in when Supabase is configured. Without Supabase, the app still works and stores My learning examples in the browser.
+
+### Supabase setup
+
+1. Create a Supabase project.
+2. Open **SQL Editor** and run `database/schema.sql`.
+3. Open **Authentication -> Providers**.
+4. Enable **Email**.
+5. Enable **Google** and **GitHub** if you want social sign-in, then add each provider's client ID/secret inside Supabase.
+6. Open **Authentication -> URL Configuration** and add your GitHub Pages URL as the site URL and redirect URL:
+
+```text
+https://mohamedragabanas.github.io/pystep-studio/
+```
+
+7. Copy the project URL and anon public key into `supabase-config.js`:
+
+```js
+window.PYSTEP_SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
+window.PYSTEP_SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_PUBLIC_KEY";
+```
+
+The anon key is safe to publish in a frontend app when Row Level Security is enabled. Do not put provider secrets or service-role keys in this file.
 
 ## Notes
 

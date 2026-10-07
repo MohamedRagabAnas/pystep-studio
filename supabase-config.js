@@ -1,0 +1,2 @@
+window.PYSTEP_SUPABASE_URL = "";
+window.PYSTEP_SUPABASE_ANON_KEY = "";
