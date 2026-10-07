@@ -339,6 +339,12 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.library-tab:disabled,
+.new-example-btn:disabled,
+.mini-btn:disabled {
+  opacity: .45;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1.35fr) minmax(330px, .65fr);
