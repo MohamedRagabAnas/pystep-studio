@@ -135,7 +135,11 @@ async function setUser(user) {
   currentUser = user;
 
   if (user) {
-    await ensureLearnerProfile(user);
+    try {
+      await ensureLearnerProfile(user);
+    } catch (err) {
+      setMessage(`Signed in, but learner database setup is incomplete: ${err.message || String(err)}`, true);
+    }
     setSignedIn(user);
   } else {
     setSignedOut("Sign in");
