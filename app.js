@@ -1,4 +1,3 @@
-const EXAMPLE_STORAGE_KEY = "pystep_my_learning_examples";
 const authBridge = () => window.pystepAuth || null;
 
 const conceptExamples = [
@@ -178,7 +177,8 @@ let trace = [];
 let stepIndex = -1;
 let libraryMode = "concepts";
 let currentExample = { source: "concepts", index: 0 };
-let myLearningExamples = loadMyLearningExamples();
+let myLearningExamples = [];
+let activeLearnerId = null;
 let autoTimer = null;
 let lastError = null;
 let lastFinalOutput = "";
@@ -315,19 +315,6 @@ RESULT_JSON = json.dumps({
 })
 `;
 
-function loadMyLearningExamples() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(EXAMPLE_STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveMyLearningExamples() {
-  localStorage.setItem(EXAMPLE_STORAGE_KEY, JSON.stringify(myLearningExamples));
-}
-
 function isSignedIn() {
   return Boolean(authBridge()?.getUser?.());
 }
@@ -365,41 +352,47 @@ function updateAccountGatedControls() {
   }
 }
 
-function mergeRemoteLearningExamples(remoteExamples) {
-  if (!Array.isArray(remoteExamples) || !remoteExamples.length) return false;
-
-  const byRemoteId = new Map(myLearningExamples.filter(ex => ex.remoteId).map(ex => [ex.remoteId, ex]));
-  const bySignature = new Map(myLearningExamples.map(ex => [`${ex.title}\n${ex.code}`, ex]));
-  let changed = false;
-
-  remoteExamples.forEach(remote => {
-    const signature = `${remote.title}\n${remote.code}`;
-    const existing = byRemoteId.get(remote.remoteId) || bySignature.get(signature);
-    if (existing) {
-      Object.assign(existing, remote);
-    } else {
-      myLearningExamples.unshift(remote);
-    }
-    changed = true;
-  });
-
-  if (changed) saveMyLearningExamples();
-  return changed;
+function clearLegacyMyLearningCache() {
+  localStorage.removeItem("pystep_my_learning_examples");
 }
 
 async function syncMyLearningFromAccount() {
   const auth = authBridge();
-  if (!auth?.getUser?.()) return;
+  const user = auth?.getUser?.();
+  if (!user) return;
 
   try {
+    const learnerId = user.id;
     const remoteExamples = await auth.loadExamples();
-    if (mergeRemoteLearningExamples(remoteExamples)) {
-      renderExamples();
-      showToast("Synced My learning examples.");
-    }
+    if (authBridge()?.getUser?.()?.id !== learnerId) return;
+    myLearningExamples = Array.isArray(remoteExamples) ? remoteExamples : [];
+    renderExamples();
+    showToast("Synced My learning examples.");
   } catch (err) {
     showToast(`Cloud sync failed: ${err.message || String(err)}`, true);
   }
+}
+
+function handleAuthChanged(event) {
+  const previousLearnerId = activeLearnerId;
+  const nextLearnerId = event.detail?.user?.id || null;
+  activeLearnerId = nextLearnerId;
+  myLearningExamples = [];
+
+  if (currentExample.source === "my-learning" || currentExample.source === "draft") {
+    loadExample("concepts", 0);
+  } else {
+    renderExamples();
+  }
+
+  if (!nextLearnerId) {
+    updateAccountGatedControls();
+    if (previousLearnerId) showToast("Signed out. My learning examples are hidden.");
+    return;
+  }
+
+  updateAccountGatedControls();
+  syncMyLearningFromAccount();
 }
 
 function getCurrentExample() {
@@ -549,7 +542,6 @@ function saveCurrentExample() {
           myLearningExamples.unshift(remote);
           currentExample = { source: "my-learning", index: 0 };
         }
-        saveMyLearningExamples();
         setLibraryMode("my-learning");
         loadExample("my-learning", currentExample.index);
         showToast("Saved to My learning.");
@@ -563,7 +555,6 @@ function deleteMyExample(index) {
   if (!ex || !confirm(`Delete "${ex.title}" from My learning?`)) return;
 
   myLearningExamples.splice(index, 1);
-  saveMyLearningExamples();
 
   const auth = authBridge();
   if (ex.remoteId && auth?.getUser?.()) {
@@ -1137,11 +1128,9 @@ els.aiQuestionForm.addEventListener("submit", (e) => {
   els.aiQuestionInput.value = "";
   explainWithAi(question);
 });
-window.addEventListener("pystep:auth-changed", () => {
-  updateAccountGatedControls();
-  syncMyLearningFromAccount();
-});
+window.addEventListener("pystep:auth-changed", handleAuthChanged);
 
+clearLegacyMyLearningCache();
 renderExamples();
 loadExample("concepts", 0);
 updateAccountGatedControls();
