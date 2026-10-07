@@ -506,10 +506,15 @@ function startOwnExample() {
   els.editor.value = `# Write your Python example here
 name = "Learner"
 print("Hello", name)`;
-  els.insight.textContent = "This is your own example. Save it to My learning when you want to keep it.";
+  els.insight.textContent = isSignedIn()
+    ? "This is your own example. Save it to My learning when you want to keep it."
+    : "This is a temporary own example. You can run it now, but sign in before saving it to My learning.";
   resetTrace();
   renderExamples();
   renderLineNumbers();
+  if (!isSignedIn()) {
+    showToast("Own example opened. Sign in only if you want to save it.");
+  }
 }
 
 function saveCurrentExample() {
