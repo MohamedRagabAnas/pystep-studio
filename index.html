@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="PyStep Studio — an interactive Python execution visualizer for beginners." />
+  <title>PyStep Studio</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">Py</div>
+        <div>
+          <h1>PyStep Studio</h1>
+          <p>See Python think.</p>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="section-label">Learning library</div>
+        <div class="library-tabs" role="tablist" aria-label="Learning library sections">
+          <button class="library-tab active" id="libraryTabBtn" type="button">Concepts</button>
+          <button class="library-tab" id="myLearningTabBtn" type="button">My learning</button>
+        </div>
+        <button class="new-example-btn" id="newExampleBtn" type="button">+ Own example</button>
+        <div id="examplesList" class="example-list"></div>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="status-row">
+          <span class="status-dot" id="engineDot"></span>
+          <span id="engineStatus">Loading Python engine…</span>
+        </div>
+        <small>Runs locally in your browser with Pyodide.</small>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">INTERACTIVE PYTHON VISUALIZER</div>
+          <h2 id="lessonTitle">Variables & arithmetic</h2>
+        </div>
+        <div class="top-actions">
+          <button class="btn ghost" id="resetBtn" title="Reset execution">↺ Reset</button>
+          <button class="btn primary" id="runBtn">▶ Prepare execution</button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <div class="panel editor-panel">
+          <div class="panel-header">
+            <div>
+              <span class="panel-title">Code</span>
+              <span class="panel-subtitle">Edit the example, then prepare execution</span>
+            </div>
+            <div class="editor-actions">
+              <button class="mini-btn" id="saveExampleBtn" type="button">Save</button>
+              <span class="badge">Python 3</span>
+            </div>
+          </div>
+
+          <div class="editor-wrap">
+            <div id="lineNumbers" class="line-numbers"></div>
+            <textarea id="codeEditor" spellcheck="false" aria-label="Python code editor"></textarea>
+            <div id="activeLineOverlay" class="active-line-overlay hidden"></div>
+          </div>
+
+          <div class="execution-bar">
+            <button class="step-btn" id="prevBtn" disabled>← Previous</button>
+            <button class="step-btn accent" id="nextBtn" disabled>Next step →</button>
+            <button class="step-btn" id="autoBtn" disabled>▶ Auto</button>
+            <div class="speed-control">
+              <span>Speed</span>
+              <input id="speedSlider" type="range" min="250" max="1800" step="50" value="900" />
+            </div>
+            <div class="step-counter" id="stepCounter">Step 0 / 0</div>
+          </div>
+        </div>
+
+        <div class="right-column">
+          <div class="panel memory-panel">
+            <div class="panel-header">
+              <div>
+                <span class="panel-title">Memory</span>
+                <span class="panel-subtitle">Variables after the executed line</span>
+              </div>
+              <span class="badge subtle" id="scopeBadge">global</span>
+            </div>
+
+            <div id="memoryEmpty" class="empty-state">
+              <div class="empty-icon">◇</div>
+              <strong>No execution state yet</strong>
+              <span>Prepare the program, then move through it step by step.</span>
+            </div>
+
+            <div id="memoryTableWrap" class="memory-table-wrap hidden">
+              <table class="memory-table">
+                <thead>
+                  <tr>
+                    <th>Variable</th>
+                    <th>Type</th>
+                    <th>Value</th>
+                  </tr>
+                </thead>
+                <tbody id="memoryTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="panel explanation-panel">
+            <div class="panel-header">
+              <div>
+                <span class="panel-title">What just happened?</span>
+                <span class="panel-subtitle">Beginner-friendly execution explanation</span>
+              </div>
+              <div class="ai-controls">
+                <button class="step-btn ai-btn" id="aiExplainBtn" disabled>Ask AI</button>
+              </div>
+            </div>
+            <div id="explanation" class="explanation">
+              Prepare the program to build its execution trace.
+            </div>
+            <div id="staticAiNotice" class="static-ai-notice hidden">
+              AI tutor is disabled in the free GitHub Pages version. Step-by-step Python explanations still run locally.
+            </div>
+            <div id="aiExplanation" class="ai-explanation hidden">
+              <div id="aiChatLog" class="ai-chat-log"></div>
+              <form id="aiQuestionForm" class="ai-question-form">
+                <input id="aiQuestionInput" class="ai-question-input" type="text" placeholder="Ask about this line or error" autocomplete="off" />
+                <button class="step-btn ai-send-btn" type="submit">Send</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="bottom-grid">
+        <div class="panel console-panel">
+          <div class="panel-header">
+            <div>
+              <span class="panel-title">Output</span>
+              <span class="panel-subtitle">Everything printed by the program up to this step</span>
+            </div>
+          </div>
+          <pre id="consoleOutput" class="console-output">No output yet.</pre>
+        </div>
+
+        <div class="panel insight-panel">
+          <div class="panel-header">
+            <div>
+              <span class="panel-title">Learning insight</span>
+              <span class="panel-subtitle">Notice how program state changes over time</span>
+            </div>
+          </div>
+          <div id="insightText" class="insight-text">
+            Each step is a snapshot of Python's state after a line executes. Changed variables are highlighted.
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.7/full/pyodide.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
