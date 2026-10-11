@@ -158,6 +158,9 @@ const els = {
   memEmpty: document.getElementById("memoryEmpty"),
   memWrap: document.getElementById("memoryTableWrap"),
   output: document.getElementById("consoleOutput"),
+  workflowBadge: document.getElementById("workflowBadge"),
+  workflowEmpty: document.getElementById("workflowEmpty"),
+  workflowCanvas: document.getElementById("workflowCanvas"),
   explanation: document.getElementById("explanation"),
   staticAiNotice: document.getElementById("staticAiNotice"),
   aiExplanation: document.getElementById("aiExplanation"),
@@ -182,6 +185,10 @@ let activeLearnerId = null;
 let autoTimer = null;
 let lastError = null;
 let lastFinalOutput = "";
+let workflowGraph = null;
+let jumpAudioContext = null;
+let lastJumpSoundStep = null;
+let finishSoundPlayed = false;
 let aiMessages = [];
 const AI_API_URL = window.PYSTEP_AI_API_URL || (["localhost", "127.0.0.1"].includes(window.location.hostname) ? "/api/explain" : "");
 if (!AI_API_URL) {
@@ -189,7 +196,7 @@ if (!AI_API_URL) {
 }
 
 const PY_TRACE_CODE = `
-import sys, io, json, builtins, traceback
+import sys, io, json, builtins, traceback, ast
 
 _source = STUDENT_CODE
 _snapshots = []
@@ -238,7 +245,117 @@ def _visible_locals(frame):
             data[k] = _safe(v)
     return data
 
+def _source_label(node):
+    try:
+        text = ast.get_source_segment(_source, node)
+        if text:
+            text = " ".join(text.strip().split())
+            return text[:110] + ("..." if len(text) > 110 else "")
+    except Exception:
+        pass
+    return type(node).__name__
+
+def _node_base(node, kind, label):
+    return {
+        "id": f"{kind}-{getattr(node, 'lineno', 0)}-{getattr(node, 'col_offset', 0)}",
+        "type": kind,
+        "line": getattr(node, "lineno", None),
+        "end_line": getattr(node, "end_lineno", getattr(node, "lineno", None)),
+        "label": label
+    }
+
+def _build_block(statements):
+    return [_build_node(stmt) for stmt in statements]
+
+def _build_except_handler(handler):
+    if handler.type is None:
+        label = "except"
+    else:
+        try:
+            label = "except " + ast.unparse(handler.type)
+        except Exception:
+            label = "except " + _source_label(handler.type)
+    if handler.name:
+        label += f" as {handler.name}"
+    item = _node_base(handler, "except", label)
+    item["body"] = _build_block(handler.body)
+    return item
+
+def _build_node(node, elif_mode=False):
+    if isinstance(node, ast.If):
+        try:
+            test = ast.unparse(node.test)
+        except Exception:
+            test = _source_label(node.test)
+        item = _node_base(node, "elif" if elif_mode else "if", ("elif " if elif_mode else "if ") + test)
+        item["body"] = _build_block(node.body)
+        if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+            item["orelse"] = [_build_node(node.orelse[0], True)]
+        else:
+            item["orelse"] = _build_block(node.orelse)
+        return item
+
+    if isinstance(node, (ast.For, ast.AsyncFor)):
+        try:
+            label = "for " + ast.unparse(node.target) + " in " + ast.unparse(node.iter)
+        except Exception:
+            label = _source_label(node)
+        item = _node_base(node, "loop", label)
+        item["body"] = _build_block(node.body)
+        item["orelse"] = _build_block(node.orelse)
+        return item
+
+    if isinstance(node, ast.While):
+        try:
+            label = "while " + ast.unparse(node.test)
+        except Exception:
+            label = _source_label(node)
+        item = _node_base(node, "loop", label)
+        item["body"] = _build_block(node.body)
+        item["orelse"] = _build_block(node.orelse)
+        return item
+
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        args = []
+        try:
+            args = [arg.arg for arg in node.args.args]
+        except Exception:
+            args = []
+        item = _node_base(node, "function", f"def {node.name}(" + ", ".join(args) + ")")
+        item["body"] = _build_block(node.body)
+        return item
+
+    if isinstance(node, ast.Try):
+        item = _node_base(node, "try", "try")
+        item["body"] = _build_block(node.body)
+        item["handlers"] = [_build_except_handler(handler) for handler in node.handlers]
+        item["orelse"] = _build_block(node.orelse)
+        item["finalbody"] = _build_block(node.finalbody)
+        return item
+
+    if isinstance(node, ast.Return):
+        return _node_base(node, "return", _source_label(node))
+
+    return _node_base(node, "statement", _source_label(node))
+
+def _build_workflow():
+    try:
+        tree = ast.parse(_source)
+        return {"type": "program", "body": _build_block(tree.body)}
+    except Exception:
+        return None
+
 _last_line_by_frame = {}
+_line_exceptions = {}
+
+def _snapshot(frame, line):
+    return {
+        "line": line,
+        "scope": frame.f_code.co_name,
+        "variables": _visible_locals(frame),
+        "output": _stdout.getvalue(),
+        "exception": _line_exceptions.pop((id(frame), line), None)
+    }
 
 def _trace(frame, event, arg):
     if frame.f_code.co_filename != "<student>":
@@ -248,23 +365,21 @@ def _trace(frame, event, arg):
     if event == "line":
         prev = _last_line_by_frame.get(fid)
         if prev is not None:
-            _snapshots.append({
-                "line": prev,
-                "scope": frame.f_code.co_name,
-                "variables": _visible_locals(frame),
-                "output": _stdout.getvalue()
-            })
+            _snapshots.append(_snapshot(frame, prev))
         _last_line_by_frame[fid] = frame.f_lineno
+
+    elif event == "exception":
+        exc_type, exc_value, _tb = arg
+        _line_exceptions[(fid, frame.f_lineno)] = {
+            "type": exc_type.__name__,
+            "message": str(exc_value),
+            "line": frame.f_lineno
+        }
 
     elif event == "return":
         prev = _last_line_by_frame.get(fid)
         if prev is not None:
-            _snapshots.append({
-                "line": prev,
-                "scope": frame.f_code.co_name,
-                "variables": _visible_locals(frame),
-                "output": _stdout.getvalue()
-            })
+            _snapshots.append(_snapshot(frame, prev))
         _last_line_by_frame.pop(fid, None)
 
     return _trace
@@ -311,7 +426,8 @@ finally:
 RESULT_JSON = json.dumps({
     "snapshots": _snapshots,
     "error": _error,
-    "final_output": _stdout.getvalue()
+    "final_output": _stdout.getvalue(),
+    "workflow": _build_workflow()
 })
 `;
 
@@ -592,6 +708,9 @@ function resetTrace() {
   stepIndex = -1;
   lastError = null;
   lastFinalOutput = "";
+  workflowGraph = null;
+  lastJumpSoundStep = null;
+  finishSoundPlayed = false;
   aiMessages = [];
   els.next.disabled = true;
   els.prev.disabled = true;
@@ -601,6 +720,11 @@ function resetTrace() {
   els.aiQuestionForm.classList.add("hidden");
   els.counter.textContent = "Step 0 / 0";
   els.output.textContent = "No output yet.";
+  els.workflowBadge.textContent = "Not prepared";
+  els.workflowEmpty.textContent = "Prepare execution to see the workflow path.";
+  els.workflowEmpty.classList.remove("hidden");
+  els.workflowCanvas.classList.add("hidden");
+  els.workflowCanvas.innerHTML = "";
   els.explanation.textContent = "Prepare the program to build its execution trace.";
   els.aiExplanation.classList.add("hidden");
   renderAiChat();
@@ -644,6 +768,7 @@ async function prepareExecution() {
     trace = result.snapshots || [];
     lastError = result.error || null;
     lastFinalOutput = result.final_output || "";
+    workflowGraph = result.workflow || null;
 
     if (!trace.length) {
       els.output.textContent = result.final_output || "No output.";
@@ -657,9 +782,9 @@ async function prepareExecution() {
 
     stepIndex = result.error ? trace.length - 1 : 0;
     renderStep();
-    els.next.disabled = trace.length <= 1;
+    els.next.disabled = Boolean(result.error);
     els.prev.disabled = stepIndex <= 0;
-    els.auto.disabled = trace.length <= 1;
+    els.auto.disabled = Boolean(result.error);
     if (result.error) {
       renderError(result.error, result.final_output);
       showToast(`Python stopped at line ${result.error.line || "?"}: ${result.error.type}`, true);
@@ -684,11 +809,17 @@ function renderError(error, finalOutput="") {
   els.next.disabled = true;
   els.auto.disabled = true;
   els.aiExplain.disabled = !canUseAi();
+  renderWorkflow();
   resetAiChatForContext();
   showToast(`Python stopped: ${error.type}${error.line ? ` on line ${error.line}` : ""}`, true);
 }
 
 function renderStep() {
+  if (isWorkflowFinished()) {
+    renderFinishedStep();
+    return;
+  }
+
   const snap = trace[stepIndex];
   if (!snap) return;
 
@@ -700,9 +831,34 @@ function renderStep() {
   highlightLine(snap.line);
   renderMemory(snap.variables || {}, previous?.variables || {});
   els.explanation.innerHTML = explainStep(snap, previous);
+  renderWorkflow();
+  playJumpSoundForStep();
 
   els.prev.disabled = stepIndex <= 0;
-  els.next.disabled = stepIndex >= trace.length - 1;
+  els.next.disabled = false;
+  els.auto.disabled = false;
+  els.aiExplain.disabled = !canUseAi();
+  resetAiChatForContext();
+}
+
+function renderFinishedStep() {
+  const previous = trace[trace.length - 1] || null;
+  els.counter.textContent = `Finished · ${trace.length} step${trace.length === 1 ? "" : "s"}`;
+  els.scope.textContent = "finished";
+  els.output.textContent = lastFinalOutput || previous?.output || "No output.";
+  els.explanation.innerHTML = `Program finished after <strong>${trace.length}</strong> executed step${trace.length === 1 ? "" : "s"}.`;
+
+  if (previous) {
+    highlightLine(previous.line);
+    renderMemory(previous.variables || {}, trace[trace.length - 2]?.variables || {});
+  }
+
+  renderWorkflow();
+  playJumpSoundForStep();
+
+  els.prev.disabled = trace.length === 0;
+  els.next.disabled = true;
+  els.auto.disabled = true;
   els.aiExplain.disabled = !canUseAi();
   resetAiChatForContext();
 }
@@ -714,6 +870,97 @@ function resetAiChatForContext() {
   els.aiQuestionForm.classList.toggle("hidden", !canUseAi());
   els.aiExplanation.classList.add("hidden");
   renderAiChat();
+}
+
+function playJumpSoundForStep() {
+  const snap = trace[stepIndex];
+  const stepKey = isWorkflowFinished()
+    ? `finished:${trace.length}`
+    : (snap ? `${stepIndex}:${snap.line}:${snap.scope}` : "");
+  if (!stepKey || stepKey === lastJumpSoundStep) return;
+  lastJumpSoundStep = stepKey;
+
+  if (isWorkflowFinished()) {
+    if (!finishSoundPlayed) {
+      finishSoundPlayed = true;
+      playFinishSound();
+    }
+    return;
+  }
+
+  finishSoundPlayed = false;
+  playJumpSound();
+}
+
+function playJumpSound() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  try {
+    jumpAudioContext = jumpAudioContext || new AudioContextClass();
+    if (jumpAudioContext.state === "suspended") {
+      jumpAudioContext.resume();
+    }
+
+    const now = jumpAudioContext.currentTime;
+    const gain = jumpAudioContext.createGain();
+    const oscillator = jumpAudioContext.createOscillator();
+
+    oscillator.type = "triangle";
+    oscillator.frequency.setValueAtTime(520, now);
+    oscillator.frequency.exponentialRampToValueAtTime(880, now + 0.055);
+    oscillator.frequency.exponentialRampToValueAtTime(660, now + 0.12);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.045, now + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+    oscillator.connect(gain);
+    gain.connect(jumpAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + 0.15);
+  } catch (err) {
+    // Browsers may block audio until a user gesture; the visual jump still works.
+  }
+}
+
+function playFinishSound() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  try {
+    jumpAudioContext = jumpAudioContext || new AudioContextClass();
+    if (jumpAudioContext.state === "suspended") {
+      jumpAudioContext.resume();
+    }
+
+    const now = jumpAudioContext.currentTime;
+    const gain = jumpAudioContext.createGain();
+    const first = jumpAudioContext.createOscillator();
+    const second = jumpAudioContext.createOscillator();
+
+    first.type = "sine";
+    second.type = "triangle";
+    first.frequency.setValueAtTime(660, now);
+    first.frequency.exponentialRampToValueAtTime(990, now + 0.12);
+    second.frequency.setValueAtTime(880, now + 0.09);
+    second.frequency.exponentialRampToValueAtTime(1320, now + 0.24);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.04, now + 0.025);
+    gain.gain.setValueAtTime(0.03, now + 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+
+    first.connect(gain);
+    second.connect(gain);
+    gain.connect(jumpAudioContext.destination);
+    first.start(now);
+    first.stop(now + 0.16);
+    second.start(now + 0.08);
+    second.stop(now + 0.3);
+  } catch (err) {
+    // Browsers may block audio until a user gesture; the visual finish state still works.
+  }
 }
 
 async function explainWithAi(question="Explain what Python is doing right now.") {
@@ -922,6 +1169,375 @@ function renderMemory(vars, prevVars) {
   }
 }
 
+function renderWorkflow() {
+  if (!trace.length && !lastError) {
+    els.workflowBadge.textContent = "Not prepared";
+    els.workflowEmpty.textContent = "Prepare execution to see the workflow path.";
+    els.workflowEmpty.classList.remove("hidden");
+    els.workflowCanvas.classList.add("hidden");
+    els.workflowCanvas.innerHTML = "";
+    return;
+  }
+
+  const lineCounts = trace.reduce((acc, snap) => {
+    acc[snap.line] = (acc[snap.line] || 0) + 1;
+    return acc;
+  }, {});
+  const scopeCount = new Set(trace.map(snap => snap.scope)).size;
+  els.workflowBadge.textContent = trace.length
+    ? `${trace.length} step${trace.length === 1 ? "" : "s"} · ${scopeCount} scope${scopeCount === 1 ? "" : "s"}`
+    : "Error before first step";
+  els.workflowEmpty.classList.add("hidden");
+  els.workflowCanvas.classList.remove("hidden");
+  els.workflowCanvas.innerHTML = "";
+
+  const chart = document.createElement("div");
+  chart.className = "flowchart";
+  chart.appendChild(renderFlowTerminus("Start", "Program begins"));
+
+  const body = workflowGraph?.body?.length ? workflowGraph.body : buildFallbackWorkflow();
+  chart.appendChild(renderWorkflowBlock(body, lineCounts));
+
+  if (lastError) {
+    chart.appendChild(renderWorkflowErrorNode());
+  } else {
+    chart.appendChild(renderFlowTerminus("End", "Program finishes", isWorkflowFinished()));
+  }
+
+  els.workflowCanvas.appendChild(chart);
+
+  const active = els.workflowCanvas.querySelector(".current-step");
+  if (active) {
+    els.workflowCanvas.scrollLeft = active.offsetLeft - (els.workflowCanvas.clientWidth - active.clientWidth) / 2;
+  }
+}
+
+function renderWorkflowBlock(nodes, lineCounts) {
+  const block = document.createElement("div");
+  block.className = "flow-block";
+
+  if (!nodes.length) {
+    const empty = document.createElement("div");
+    empty.className = "flow-empty-path";
+    empty.textContent = "No statements on this path";
+    block.appendChild(empty);
+    return block;
+  }
+
+  nodes.forEach((node, index) => {
+    if (index > 0) block.appendChild(renderFlowConnector());
+    block.appendChild(renderWorkflowNode(node, lineCounts));
+  });
+
+  return block;
+}
+
+function renderWorkflowNode(node, lineCounts) {
+  if (node.type === "if" || node.type === "elif") return renderDecisionNode(node, lineCounts);
+  if (node.type === "loop") return renderLoopNode(node, lineCounts);
+  if (node.type === "function") return renderFunctionNode(node, lineCounts);
+  if (node.type === "try") return renderTryNode(node, lineCounts);
+  if (node.type === "except") return renderExceptNode(node, lineCounts);
+  return renderStatementNode(node, lineCounts);
+}
+
+function renderDecisionNode(node, lineCounts) {
+  const wrap = document.createElement("div");
+  wrap.className = `decision-card ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+  wrap.appendChild(renderDiamond(node, lineCounts));
+
+  const lanes = document.createElement("div");
+  lanes.className = "branch-lanes";
+  lanes.appendChild(renderBranchLane("True path", node.body || [], lineCounts, branchWasTaken(node.body || [])));
+  lanes.appendChild(renderBranchLane(node.orelse?.[0]?.type === "elif" ? "Else / elif" : "False path", node.orelse || [], lineCounts, branchWasTaken(node.orelse || [])));
+  wrap.appendChild(lanes);
+
+  return wrap;
+}
+
+function renderDiamond(node, lineCounts) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "decision-diamond";
+  btn.disabled = !hasTraceForLine(node.line);
+  btn.onclick = () => jumpToLine(node.line);
+  btn.innerHTML = `
+    <span class="decision-content">
+      <span>${escapeHtml(node.type === "elif" ? "elif" : "if")}</span>
+      <strong>${escapeHtml(node.label.replace(/^(if|elif)\s+/, ""))}</strong>
+      ${renderExecutionBadge(node, lineCounts)}
+    </span>
+  `;
+  return btn;
+}
+
+function renderLoopNode(node, lineCounts) {
+  const wrap = document.createElement("div");
+  wrap.className = `loop-card ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+
+  const header = document.createElement("button");
+  header.type = "button";
+  header.className = "loop-header";
+  header.disabled = !hasTraceForLine(node.line);
+  header.onclick = () => jumpToLine(node.line);
+  header.innerHTML = `
+    <span class="loop-icon">↺</span>
+    <span>
+      <strong>${escapeHtml(node.label)}</strong>
+      <small>Loop body repeats while this condition or iterator continues</small>
+    </span>
+    ${renderLoopBadge(node, lineCounts)}
+  `;
+
+  const body = document.createElement("div");
+  body.className = "loop-body";
+  body.appendChild(renderWorkflowBlock(node.body || [], lineCounts));
+
+  const back = document.createElement("div");
+  back.className = "loop-back";
+  back.textContent = "Back to loop check";
+
+  wrap.appendChild(header);
+  wrap.appendChild(body);
+  wrap.appendChild(back);
+
+  if (node.orelse?.length) {
+    wrap.appendChild(renderBranchLane("Loop else", node.orelse, lineCounts, branchWasTaken(node.orelse)));
+  }
+
+  return wrap;
+}
+
+function renderFunctionNode(node, lineCounts) {
+  const wrap = document.createElement("div");
+  wrap.className = `function-card ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+  wrap.appendChild(renderStatementNode(node, lineCounts));
+  const body = document.createElement("div");
+  body.className = "function-body";
+  body.appendChild(renderWorkflowBlock(node.body || [], lineCounts));
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function renderTryNode(node, lineCounts) {
+  const wrap = document.createElement("div");
+  wrap.className = `try-card ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+  wrap.appendChild(renderStatementNode(node, lineCounts));
+
+  const lanes = document.createElement("div");
+  lanes.className = "try-lanes";
+  lanes.appendChild(renderBranchLane("Try body", node.body || [], lineCounts, branchWasTaken(node.body || [])));
+
+  (node.handlers || []).forEach(handler => {
+    lanes.appendChild(renderBranchLane(handler.label || "except", [handler], lineCounts, branchWasTaken([handler])));
+  });
+
+  if (node.orelse?.length) {
+    lanes.appendChild(renderBranchLane("Else path", node.orelse, lineCounts, branchWasTaken(node.orelse)));
+  }
+
+  if (node.finalbody?.length) {
+    lanes.appendChild(renderBranchLane("Finally", node.finalbody, lineCounts, branchWasTaken(node.finalbody)));
+  }
+
+  wrap.appendChild(lanes);
+  return wrap;
+}
+
+function renderExceptNode(node, lineCounts) {
+  const wrap = document.createElement("div");
+  wrap.className = `except-card ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+  wrap.appendChild(renderStatementNode(node, lineCounts));
+  const body = document.createElement("div");
+  body.className = "except-body";
+  body.appendChild(renderWorkflowBlock(node.body || [], lineCounts));
+  wrap.appendChild(body);
+  return wrap;
+}
+
+function renderStatementNode(node, lineCounts) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = `flow-node ${node.type || "statement"} ${nodeStatusClass(node)} ${currentStepClass(node)}`;
+  btn.disabled = !hasTraceForLine(node.line);
+  btn.onclick = () => jumpToLine(node.line);
+  btn.innerHTML = `
+    <span class="flow-node-kind">${escapeHtml(flowKindLabel(node.type))}</span>
+    <span class="flow-node-line">Line ${escapeHtml(node.line || "?")}</span>
+    <code>${escapeHtml(node.label || getSourceLine(node.line).trim() || "(statement)")}</code>
+    ${renderExecutionBadge(node, lineCounts)}
+  `;
+  return btn;
+}
+
+function renderBranchLane(title, nodes, lineCounts, taken) {
+  const lane = document.createElement("div");
+  lane.className = `branch-lane ${taken ? "taken" : "not-taken"}`;
+  lane.innerHTML = `<div class="branch-title">${escapeHtml(title)}<span>${taken ? "taken" : "not taken"}</span></div>`;
+  lane.appendChild(renderWorkflowBlock(nodes, lineCounts));
+  return lane;
+}
+
+function renderFlowConnector() {
+  const connector = document.createElement("div");
+  connector.className = "flow-connector";
+  return connector;
+}
+
+function renderFlowTerminus(title, subtitle, isCurrent=false) {
+  const node = document.createElement("div");
+  node.className = `flow-terminus ${isCurrent ? "current-step finished" : ""}`;
+  node.innerHTML = `<strong>${escapeHtml(title)}</strong><span>${escapeHtml(subtitle)}</span>`;
+  return node;
+}
+
+function renderWorkflowErrorNode() {
+  const errorNode = document.createElement("div");
+  errorNode.className = "flow-node error active";
+  errorNode.innerHTML = `
+    <span class="flow-node-kind">Stopped</span>
+    <span class="flow-node-line">${lastError.line ? `Line ${lastError.line}` : "Error"}</span>
+    <code>${escapeHtml(lastError.code || lastError.message || "Python stopped")}</code>
+    <span class="execution-badge error">${escapeHtml(lastError.type || "Error")}</span>
+  `;
+  return errorNode;
+}
+
+function renderExecutionBadge(node, lineCounts) {
+  const count = ownExecutionCount(node, lineCounts);
+  if (!count) return `<span class="execution-badge muted">0 runs</span>`;
+  return `<span class="execution-badge">${count} run${count === 1 ? "" : "s"}</span>`;
+}
+
+function renderLoopBadge(node, lineCounts) {
+  const checks = ownExecutionCount(node, lineCounts);
+  const iterations = loopIterationCount(node, lineCounts);
+  if (!checks && !iterations) {
+    return `<span class="execution-badge muted">0 iterations</span>`;
+  }
+
+  return `
+    <span class="execution-badge loop-badge">
+      <strong>${iterations}</strong> iteration${iterations === 1 ? "" : "s"}
+      <small>${checks} check${checks === 1 ? "" : "s"}</small>
+    </span>
+  `;
+}
+
+function nodeStatusClass(node) {
+  if (isCurrentNode(node)) return "active";
+  if (executionCountForNode(node) > 0) return "visited";
+  return "skipped";
+}
+
+function currentStepClass(node) {
+  const current = trace[stepIndex];
+  if (isWorkflowFinished()) return "";
+  return current && node.line === current.line ? "current-step" : "";
+}
+
+function isWorkflowFinished() {
+  return !lastError && trace.length > 0 && stepIndex >= trace.length;
+}
+
+function isCurrentNode(node) {
+  const current = trace[stepIndex];
+  if (!current || !node.line) return false;
+  return current.line >= node.line && current.line <= (node.end_line || node.line);
+}
+
+function branchWasTaken(nodes) {
+  return nodes.some(node => executionCountForNode(node) > 0);
+}
+
+function ownExecutionCount(node, lineCounts=null) {
+  const counts = lineCounts || trace.reduce((acc, snap) => {
+    acc[snap.line] = (acc[snap.line] || 0) + 1;
+    return acc;
+  }, {});
+  return counts[node.line] || 0;
+}
+
+function loopIterationCount(node, lineCounts=null) {
+  const counts = lineCounts || trace.reduce((acc, snap) => {
+    acc[snap.line] = (acc[snap.line] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Math.max(
+    ...collectBodyLines(node.body || []).map(line => counts[line] || 0),
+    0
+  );
+}
+
+function collectBodyLines(nodes) {
+  const lines = [];
+  for (const node of nodes) {
+    if (node.line) lines.push(node.line);
+    lines.push(...collectBodyLines(node.body || []));
+    lines.push(...collectBodyLines(node.orelse || []));
+    lines.push(...collectBodyLines(node.handlers || []));
+    lines.push(...collectBodyLines(node.finalbody || []));
+  }
+  return lines;
+}
+
+function executionCountForNode(node, lineCounts=null) {
+  const counts = lineCounts || trace.reduce((acc, snap) => {
+    acc[snap.line] = (acc[snap.line] || 0) + 1;
+    return acc;
+  }, {});
+  let total = counts[node.line] || 0;
+  for (const child of [...(node.body || []), ...(node.orelse || [])]) {
+    total += executionCountForNode(child, counts);
+  }
+  for (const handler of node.handlers || []) {
+    total += executionCountForNode(handler, counts);
+  }
+  for (const child of node.finalbody || []) {
+    total += executionCountForNode(child, counts);
+  }
+  return total;
+}
+
+function hasTraceForLine(line) {
+  return trace.some(snap => snap.line === line);
+}
+
+function jumpToLine(line) {
+  const index = trace.findIndex(snap => snap.line === line);
+  if (index < 0) return;
+  stopAuto();
+  stepIndex = index;
+  renderStep();
+}
+
+function buildFallbackWorkflow() {
+  const uniqueLines = [...new Set(trace.map(snap => snap.line))];
+  return uniqueLines.map(line => ({
+    id: `line-${line}`,
+    type: "statement",
+    line,
+    end_line: line,
+    label: getSourceLine(line).trim() || "(statement)"
+  }));
+}
+
+function flowKindLabel(type) {
+  const labels = {
+    try: "Try",
+    except: "Except",
+    function: "Function",
+    return: "Return",
+    statement: "Step"
+  };
+  return labels[type] || "Step";
+}
+
+function getSourceLine(lineNumber) {
+  return els.editor.value.split("\n")[lineNumber - 1] || "";
+}
+
 function explainStep(snap, previous) {
   const lines = els.editor.value.split("\n");
   const code = (lines[snap.line - 1] || "").trim();
@@ -941,6 +1557,10 @@ function explainStep(snap, previous) {
   }
   if (!newVars.length && !changed.length) {
     text += `No visible variable changed at this step. `;
+  }
+
+  if (snap.exception) {
+    text += `This line raised <strong>${escapeHtml(snap.exception.type)}</strong>: ${escapeHtml(snap.exception.message || "")}. Python then looked for an exception handler. `;
   }
 
   if (snap.scope !== "<module>") {
@@ -1030,7 +1650,7 @@ function highlightLine(line) {
 }
 
 function nextStep() {
-  if (stepIndex < trace.length - 1) {
+  if (stepIndex < trace.length) {
     stepIndex++;
     renderStep();
   } else {
@@ -1053,7 +1673,7 @@ function toggleAuto() {
   }
   els.auto.textContent = "Ⅱ Pause";
   const tick = () => {
-    if (stepIndex >= trace.length - 1) {
+    if (stepIndex >= trace.length) {
       stopAuto();
       return;
     }

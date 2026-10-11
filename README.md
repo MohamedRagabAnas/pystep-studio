@@ -6,6 +6,7 @@ A polished web-based Python execution visualizer for beginner learners.
 
 - Real Python 3 execution in the browser using Pyodide
 - Step-by-step execution trace
+- Workflow visualization with branching, loop paths, execution counts, and function calls
 - Current-line highlighting
 - Previous / Next / Auto execution
 - Variable memory table with type and value
